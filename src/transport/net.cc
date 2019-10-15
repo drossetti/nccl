@@ -71,7 +71,7 @@ static ncclResult_t netGetGdrSupport(struct ncclTopoSystem* topo, int64_t busId,
        //INFO(NCCL_NET,"NET/%s : inspecting kind of GPU %d[%d] / HCA %d", ncclNetName(), cudaDev, nvmlDev, dev);
        NCCLCHECK(ncclTopoHasNvlink(topo, busId, &nvlink));
        if (!nvlink) {
-	       INFO(NCCL_NET,"NET/%s : GPU Direct RDMA Disabled for GPU %d[%d] / HCA %d", ncclNetName(), cudaDev, nvmlDev, dev);
+         //INFO(NCCL_NET,"NET/%s : GPU Direct RDMA Disabled for GPU %d[%d] / HCA %d", ncclNetName(), cudaDev, nvmlDev, dev);
          return ncclSuccess;
        }
     }
