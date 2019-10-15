@@ -12,6 +12,7 @@
 #include "topo.h"
 #include <cuda_runtime.h>
 #include <assert.h>
+#include "io_consistency.h"
 
 #define NET_MAX_IFS 16
 #define NET_MAX_GPUS 32
@@ -65,8 +66,10 @@ struct netRecvResources {
   struct ncclRecvMem* hostRecvMem;
   struct ncclSendMem* devHostSendMem;
   struct ncclRecvMem* devHostRecvMem;
+  int cudaDev;
   int netDev;
   int useGdr;
+  int useEtbl;
   int buffSize;
   void* mhandle;
   void* llMhandle;
@@ -245,6 +248,7 @@ end:
 
 NCCL_PARAM(NetGdrRead, "NET_GDR_READ", -2);
 NCCL_PARAM(NetGdrLevel, "NET_GDR_LEVEL", PATH_PHB);
+NCCL_PARAM(NetFlushEtbl, "NET_FLUSH_ETBL", 0);
 
 static ncclResult_t netGetGdrSupport(int dev, int read, int* useGdr) {
   *useGdr = 0;
@@ -258,8 +262,12 @@ static ncclResult_t netGetGdrSupport(int dev, int read, int* useGdr) {
     if (gdrReadParam == 0) return ncclSuccess;
     if (gdrReadParam < 0) {
        int nvlink;
+       INFO(NCCL_NET,"NET/%s : inspecting kind of GPU %d[%d] / HCA %d", ncclNetName(), cudaDev, nvmlDev, dev);
        NCCLCHECK(ncclNvlinkGpu(&nvlink));
-       if (!nvlink) return ncclSuccess;
+       if (!nvlink) {
+	 INFO(NCCL_NET,"NET/%s : GPU Direct RDMA Disabled for GPU %d[%d] / HCA %d", ncclNetName(), cudaDev, nvmlDev, dev);
+	 return ncclSuccess;
+       }
     }
   }
 
@@ -316,7 +324,19 @@ ncclResult_t netRecvSetup(struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peer
   int cudaDev;
   CUDACHECK(cudaGetDevice(&cudaDev));
   resources->netDev = getDev(cudaDev, channelId);
+  resources->cudaDev = cudaDev;
   NCCLCHECK(netGetGdrSupport(resources->netDev, 0, &resources->useGdr));
+  if (ncclParamNetFlushEtbl()) {
+    if (ioRtConsistencyInit() == cudaSuccess) {
+      WARN("ioRtConsistencyInit success, enabling ETBL");
+      // TODO: call ioConsistencyDeviceSupportsCpuFlush
+      resources->useEtbl = 1;
+    } else {
+      WARN("ioRtConsistencyInit does not work");
+    }
+  } else {
+      WARN("ioRtConsistencyInit is disabled");
+  }
 
   int sendSize = sizeof(struct ncclSendMem);
   NCCLCHECK(ncclCudaHostAlloc((void**)&resources->hostSendMem, (void**)&resources->devHostSendMem, sendSize));
@@ -509,6 +529,12 @@ ncclResult_t netRecvProxy(struct ncclProxyArgs* args) {
     args->tail = resources->step;
     args->end = args->head + args->nsteps;
     args->state = ncclProxyOpProgress;
+
+    //args->connector->comm->cudaDev
+    if (resources->useEtbl) {
+      // setting current CUDA device to be used by ioConsistency API below
+      CUDACHECK(cudaSetDevice(resources->cudaDev));
+    }
   }
   if (args->state == ncclProxyOpProgress) {
     args->idle = 1;
@@ -534,7 +560,16 @@ ncclResult_t netRecvProxy(struct ncclProxyArgs* args) {
         if (done) {
           args->head += args->sliceSteps;
           if (args->llMode == 0) {
-            if (resources->useGdr) ncclNetFlush(resources->netRecvComm, localBuff+buffSlot*stepSize, size, mhandle);
+            if (resources->useGdr) {
+	      if (resources->useEtbl) {
+		cudaError_t res = ioRtConsistencyFenceCurrentCtx();
+		if(cudaSuccess != res) {
+		  WARN("Error : error %d in I/O consistency API", res);
+		}
+	      } else {
+		NCCLCHECK(ncclNetFlush(resources->netRecvComm, localBuff+buffSlot*stepSize, size, mhandle));
+	      }
+	    }
             resources->hostRecvMem->tail = args->head;
           }
           args->idle = 0;
