@@ -38,6 +38,9 @@ struct netRecvResources {
   struct ncclSendMem* devHostSendMem;
   struct ncclRecvMem* devHostRecvMem;
   int cudaDev;
+  int cudaHasAts;
+  cudaStream_t cudaStream;
+  cudaEvent_t cudaEvent;
   int netDev;
   int useGdr;
   int useEtbl;
@@ -127,9 +130,12 @@ ncclResult_t netRecvSetup(struct ncclTopoSystem* topo, struct ncclTopoGraph* gra
 
   NCCLCHECK(ncclTopoGetNetDev(graph, 0, channelId, &resources->netDev));
   NCCLCHECK(netGetGdrSupport(topo, myInfo->busId, resources->netDev, 0, &resources->useGdr));
-  int cudaDev;
-  CUDACHECK(cudaGetDevice(&cudaDev));
-  resources->cudaDev = cudaDev;
+  CUDACHECK(cudaGetDevice(&resources->cudaDev));
+  CUDACHECK(cudaDeviceGetAttribute(&resources->cudaHasAts, cudaDevAttrDirectManagedMemAccessFromHost, resources->cudaDev));
+  if (resources->cudaHasAts) {
+    CUDACHECK(cudaStreamCreateWithFlags(&resources->cudaStream, cudaStreamNonBlocking));
+    CUDACHECK(cudaEventCreateWithFlags(&resources->cudaEvent, cudaEventDisableTiming));
+  }
   if (ncclParamNetFlushEtbl()) {
     if (ioRtConsistencyInit() == cudaSuccess) {
       WARN("ioRtConsistencyInit success, enabling ETBL");
@@ -413,7 +419,11 @@ ncclResult_t netRecvProxy(struct ncclProxyArgs* args) {
                   WARN("Error : CUDA error %d in I/O consistency API", res);
                 }
               } else {
-                NCCLCHECK(ncclNetFlush(resources->netRecvComm, localBuff+buffSlot*stepSize, size, mhandle));
+                if (resources->cudaHasAts) {
+                  CUDACHECK(cudaEventRecord(resources->cudaEvent, resources->cudaStream));
+                } else {
+                  NCCLCHECK(ncclNetFlush(resources->netRecvComm, localBuff+buffSlot*stepSize, size, mhandle));
+                }
               }
             }
             resources->hostRecvMem->tail = args->head;
