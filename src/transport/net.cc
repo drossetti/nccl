@@ -133,8 +133,9 @@ ncclResult_t netRecvSetup(struct ncclTopoSystem* topo, struct ncclTopoGraph* gra
   CUDACHECK(cudaGetDevice(&resources->cudaDev));
   CUDACHECK(cudaDeviceGetAttribute(&resources->cudaHasAts, cudaDevAttrDirectManagedMemAccessFromHost, resources->cudaDev));
   if (resources->cudaHasAts) {
+    WARN("GPU has ATS\n");
     CUDACHECK(cudaStreamCreateWithFlags(&resources->cudaStream, cudaStreamNonBlocking));
-    // events with timing prevents optimizations in the CUDA driver
+    // using events with timing prevents optimizations in the CUDA driver
     //CUDACHECK(cudaEventCreateWithFlags(&resources->cudaEvent, cudaEventDisableTiming));
     CUDACHECK(cudaEventCreateWithFlags(&resources->cudaEvent, cudaEventDefault));
   }
@@ -253,6 +254,11 @@ ncclResult_t netRecvFree(void* transportResources) {
   NCCLCHECK(ncclCudaHostFree(resources->hostRecvMem));
   if (resources->useGdr)
     CUDACHECK(cudaFree(resources->devRecvMem));
+  // TODO: free flush resources
+  if (resources->cudaHasAts) {
+    CUDACHECK(cudaStreamDestroy(resources->cudaStream));
+    CUDACHECK(cudaEventDestroy(resources->cudaEvent));
+  }
   NCCLCHECK(ncclNetCloseRecv(resources->netRecvComm));
   free(resources);
   return ncclSuccess;
