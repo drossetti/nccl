@@ -134,7 +134,9 @@ ncclResult_t netRecvSetup(struct ncclTopoSystem* topo, struct ncclTopoGraph* gra
   CUDACHECK(cudaDeviceGetAttribute(&resources->cudaHasAts, cudaDevAttrDirectManagedMemAccessFromHost, resources->cudaDev));
   if (resources->cudaHasAts) {
     CUDACHECK(cudaStreamCreateWithFlags(&resources->cudaStream, cudaStreamNonBlocking));
-    CUDACHECK(cudaEventCreateWithFlags(&resources->cudaEvent, cudaEventDisableTiming));
+    // events with timing prevents optimizations in the CUDA driver
+    //CUDACHECK(cudaEventCreateWithFlags(&resources->cudaEvent, cudaEventDisableTiming));
+    CUDACHECK(cudaEventCreateWithFlags(&resources->cudaEvent, cudaEventDefault));
   }
   if (ncclParamNetFlushEtbl()) {
     if (ioRtConsistencyInit() == cudaSuccess) {
