@@ -445,6 +445,7 @@ ncclResult_t netRecvProxy(struct ncclProxyArgs* args) {
               if (resources->useEtblFlush) {
                 CUDACHECK(ioRtConsistencyFenceCurrentCtx());
               } else if (resources->useEventFlush) {
+                // just recording, without synchronizing, is enough on POWER9 (ATS=1) only
                 CUDACHECK(cudaEventRecord(resources->cudaEvent, resources->cudaStream));
               } else if (resources->useTransportFlush){
                 NCCLCHECK(ncclNetFlush(resources->netRecvComm, localBuff+buffSlot*stepSize, size, mhandle));
