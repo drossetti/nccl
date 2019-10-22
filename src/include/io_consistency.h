@@ -10,10 +10,11 @@ extern "C" {
 CUresult ioConsistencyInit(void);
 CUresult ioConsistencyFenceCurrentCtx();
 CUresult ioConsistencyFenceCtx(CUcontext ctx);
-CUresult ioConsistencyDeviceSupportsCpuFlush(int devId, int *pflag);
+CUresult ioConsistencyDeviceSupportsCpuFlush(int *pflag, int devId);
 
 cudaError_t ioRtConsistencyInit(void);
 cudaError_t ioRtConsistencyFenceCurrentCtx();
+cudaError_t ioRtConsistencyDeviceSupportsCpuFlush(int *pflag, int device);
 
 #ifdef __cplusplus
 }

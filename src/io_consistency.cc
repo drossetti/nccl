@@ -130,18 +130,20 @@ typedef struct CUetblIoConsistency_st {
 }
 #endif // __cplusplus
 
+#define VALID_ETBL(IOCONS) (NULL != (IOCONS))
+
 //-----------------------------------------------------------
 
 static CUetblIoConsistency *iocons = NULL;
 
 static CUresult ioConsistencyGetAttribute(int *pi, CUioConsistencyAttribute attrib, CUdevice dev)
 {
-    if (!iocons)
+    if (VALID_ETBL(iocons))
         return CUDA_ERROR_UNKNOWN;
     return iocons->ioConsistencyGetAttribute(pi, attrib, dev);
 }
 
-CUresult ioConsistencyDeviceSupportsCpuFlush(int devId, int *pflag)
+CUresult ioConsistencyDeviceSupportsCpuFlush(int *pflag, int devId)
 {
     CUresult rc;
     int attr = 0;
@@ -168,7 +170,7 @@ CUresult ioConsistencyFenceCurrentCtx()
 
 CUresult ioConsistencyFenceCtx(CUcontext ctx)
 {
-    if (!iocons)
+    if (VALID_ETBL(iocons))
         return CUDA_ERROR_UNKNOWN;
     return iocons->ioConsistencyFenceCtx(ctx);
 }
@@ -189,7 +191,7 @@ CUresult ioConsistencyInit()
         goto out;
     }
 
-    if (!iocons) {
+    if (VALID_ETBL(iocons)) {
         fprintf(stderr, "this should never happen\n");
         rc = CUDA_ERROR_UNKNOWN;
     }
@@ -202,23 +204,23 @@ cudaError_t ioRtConsistencyInit()
 {
     cudaError_t rc;
     // non-threadsafe
-    if (iocons) {
-        fprintf(stderr, "CUDA driver feature already initialized\n");
+    if (VALID_ETBL(iocons)) {
+        rc = cudaGetExportTable((const void**)&iocons, &CU_ETID_IoConsistency);
+        if (rc != cudaSuccess) {
+            fprintf(stderr, "CUDA driver does not have required support\n");
+            goto out;
+        }
+
+        if (VALID_ETBL(iocons)) {
+            fprintf(stderr, "this should never happen\n");
+            rc = cudaErrorUnknown;
+            goto out;
+        }
+       
+    } else {
+        //fprintf(stderr, "CUDA driver feature already initialized\n");
         rc = cudaSuccess;
-        goto out;
     }
-
-    rc = cudaGetExportTable((const void**)&iocons, &CU_ETID_IoConsistency);
-    if (rc != cudaSuccess) {
-        fprintf(stderr, "CUDA driver does not have required support\n");
-        goto out;
-    }
-
-    if (!iocons) {
-        fprintf(stderr, "this should never happen\n");
-        rc = cudaErrorUnknown;
-    }
-
  out:
     return rc;
 }
@@ -229,3 +231,7 @@ cudaError_t ioRtConsistencyFenceCurrentCtx()
     return (cudaError_t)iocons->ioConsistencyFenceCurrentCtx();
 }
 
+cudaError_t ioRtConsistencyDeviceSupportsCpuFlush(int *pflag, int device)
+{
+    return (cudaError_t)ioConsistencyDeviceSupportsCpuFlush(pflag, device);
+}
