@@ -442,7 +442,7 @@ ncclResult_t netRecvProxy(struct ncclProxyArgs* args) {
           args->head += args->sliceSteps;
           if (args->protocol == NCCL_PROTO_SIMPLE) {
             if (resources->useGdr) { 
-              if (resources->useEtblFlush) {
+              if (resources->useEtblFlush && (size > 0)) {
                 CUDACHECK(ioRtConsistencyFenceCurrentCtx());
               } else if (resources->useEventFlush) {
                 // just recording, without synchronizing, is enough on POWER9 (ATS=1) only
