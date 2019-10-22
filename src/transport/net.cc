@@ -38,12 +38,14 @@ struct netRecvResources {
   struct ncclSendMem* devHostSendMem;
   struct ncclRecvMem* devHostRecvMem;
   int cudaDev;
-  int cudaHasAts;
-  cudaStream_t cudaStream;
-  cudaEvent_t cudaEvent;
   int netDev;
   int useGdr;
-  int useEtbl;
+  int cudaDevHasAts;
+  int useEtblFlush:1;
+  int useTransportFlush:1;
+  int useEventFlush:1;
+  cudaStream_t cudaStream;
+  cudaEvent_t cudaEvent;
   int buffSize;
   void* mhandle;
   void* llMhandle;
@@ -61,7 +63,13 @@ ncclResult_t netCanConnect(int* ret, struct ncclTopoSystem* topo, struct ncclTop
 
 NCCL_PARAM(NetGdrRead, "NET_GDR_READ", -2);
 NCCL_PARAM(NetGdrLevel, "NET_GDR_LEVEL", PATH_PHB);
-NCCL_PARAM(NetFlushEtbl, "NET_FLUSH_ETBL", 0);
+enum {
+  NET_FLUSH_NONE,
+  NET_FLUSH_EVENT,
+  NET_FLUSH_ETBL,
+  NET_FLUSH_TRANSPORT
+};
+NCCL_PARAM(NetFlush, "NET_FLUSH", NET_FLUSH_TRANSPORT);
 
 static ncclResult_t netGetGdrSupport(struct ncclTopoSystem* topo, int64_t busId, int netDev, int read, int* useGdr) {
   *useGdr = 0;
@@ -131,24 +139,38 @@ ncclResult_t netRecvSetup(struct ncclTopoSystem* topo, struct ncclTopoGraph* gra
   NCCLCHECK(ncclTopoGetNetDev(graph, 0, channelId, &resources->netDev));
   NCCLCHECK(netGetGdrSupport(topo, myInfo->busId, resources->netDev, 0, &resources->useGdr));
   CUDACHECK(cudaGetDevice(&resources->cudaDev));
-  CUDACHECK(cudaDeviceGetAttribute(&resources->cudaHasAts, cudaDevAttrDirectManagedMemAccessFromHost, resources->cudaDev));
-  if (resources->cudaHasAts) {
-    WARN("GPU has ATS\n");
-    CUDACHECK(cudaStreamCreateWithFlags(&resources->cudaStream, cudaStreamNonBlocking));
-    // using events with timing prevents optimizations in the CUDA driver
-    //CUDACHECK(cudaEventCreateWithFlags(&resources->cudaEvent, cudaEventDisableTiming));
-    CUDACHECK(cudaEventCreateWithFlags(&resources->cudaEvent, cudaEventDefault));
-  }
-  if (ncclParamNetFlushEtbl()) {
+  switch (ncclParamNetFlush()) {
+  case NET_FLUSH_ETBL:
     if (ioRtConsistencyInit() == cudaSuccess) {
       WARN("ioRtConsistencyInit success, enabling ETBL");
       // TODO: call ioConsistencyDeviceSupportsCpuFlush
-      resources->useEtbl = 1;
+      resources->useEtblFlush = 1;
     } else {
       WARN("ioRtConsistencyInit does not work");
     }
-  } else {
-      WARN("ioRtConsistencyInit is disabled");
+    break;
+  case NET_FLUSH_EVENT:
+    CUDACHECK(cudaDeviceGetAttribute(&resources->cudaDevHasAts, cudaDevAttrDirectManagedMemAccessFromHost, resources->cudaDev));
+    if (resources->cudaDevHasAts) {
+      WARN("GPU has ATS, flushing via CUDA Event Record\n");
+      CUDACHECK(cudaStreamCreateWithFlags(&resources->cudaStream, cudaStreamNonBlocking));
+      // using events with timing (default) prevents optimizations in the CUDA driver which would make it useless
+      CUDACHECK(cudaEventCreateWithFlags(&resources->cudaEvent, cudaEventDefault));
+      resources->useEventFlush = 1;
+    } else {
+      WARN("GPU ATS unsupported, flushing via CUDA Event Record does not work, exiting...\n");
+      exit(EXIT_FAILURE);
+    }
+    break;
+  case NET_FLUSH_TRANSPORT:
+    resources->useTransportFlush = 1;
+    break;
+  case NET_FLUSH_NONE:
+    WARN("flushing is disabled, expect potential data validation issues\n");
+    break;
+  default:
+    WARN("invalid NET_FLUSH value\n");
+    exit(EXIT_FAILURE);
   }
 
   int sendSize = sizeof(struct ncclSendMem);
@@ -254,8 +276,7 @@ ncclResult_t netRecvFree(void* transportResources) {
   NCCLCHECK(ncclCudaHostFree(resources->hostRecvMem));
   if (resources->useGdr)
     CUDACHECK(cudaFree(resources->devRecvMem));
-  // TODO: free flush resources
-  if (resources->cudaHasAts) {
+  if (resources->useEventFlush) {
     CUDACHECK(cudaStreamDestroy(resources->cudaStream));
     CUDACHECK(cudaEventDestroy(resources->cudaEvent));
   }
@@ -390,9 +411,9 @@ ncclResult_t netRecvProxy(struct ncclProxyArgs* args) {
     args->end = args->head + args->nsteps;
     args->state = ncclProxyOpProgress;
 
-    //args->connector->comm->cudaDev
-    if (resources->useEtbl) {
-      // setting current CUDA device to be used by ioConsistency API below
+    if (resources->useEtblFlush || resources->useEventFlush) {
+      // setting current CUDA device to be used by ioConsistency API 
+      // below as well as CUDA event-based flush
       CUDACHECK(cudaSetDevice(resources->cudaDev));
     }
   }
@@ -421,17 +442,12 @@ ncclResult_t netRecvProxy(struct ncclProxyArgs* args) {
           args->head += args->sliceSteps;
           if (args->protocol == NCCL_PROTO_SIMPLE) {
             if (resources->useGdr) { 
-              if (resources->useEtbl) {
-                cudaError_t res = ioRtConsistencyFenceCurrentCtx();
-                if(cudaSuccess != res) {
-                  WARN("Error : CUDA error %d in I/O consistency API", res);
-                }
-              } else {
-                if (resources->cudaHasAts) {
-                  CUDACHECK(cudaEventRecord(resources->cudaEvent, resources->cudaStream));
-                } else {
-                  NCCLCHECK(ncclNetFlush(resources->netRecvComm, localBuff+buffSlot*stepSize, size, mhandle));
-                }
+              if (resources->useEtblFlush) {
+                CUDACHECK(ioRtConsistencyFenceCurrentCtx());
+              } else if (resources->useEventFlush) {
+                CUDACHECK(cudaEventRecord(resources->cudaEvent, resources->cudaStream));
+              } else if (resources->useTransportFlush){
+                NCCLCHECK(ncclNetFlush(resources->netRecvComm, localBuff+buffSlot*stepSize, size, mhandle));
               }
             }
             resources->hostRecvMem->tail = args->head;
