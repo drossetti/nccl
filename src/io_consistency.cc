@@ -100,64 +100,6 @@ typedef struct CUetblIoConsistency_st {
 
 static CUetblIoConsistency *iocons = NULL;
 
-static CUresult ioConsistencyGetAttribute(int *pi, CUioConsistencyAttribute attrib, CUdevice dev)
-{
-    if (VALID_ETBL(iocons))
-        return CUDA_ERROR_UNKNOWN;
-    return iocons->ioConsistencyGetAttribute(pi, attrib, dev);
-}
-
-CUresult ioConsistencyDeviceSupportsHostSideFence(int *pflag, int devId)
-{
-    CUresult rc;
-    int attr = 0;
-    CUdevice dev;
-    rc = cuDeviceGet(&dev, devId);
-    if (rc != CUDA_SUCCESS) {
-        goto out;
-    }
-    rc = ioConsistencyGetAttribute(&attr, CU_IOCONSISTENCY_ATTRIBUTE_SUPPORT_HOSTSIDE_FENCE, dev);
-    if (rc != CUDA_SUCCESS) {
-        goto out;
-    }
-    ASSERT(pflag);
-    *pflag = (attr != 0);
-out:
-    return rc;
-}
-
-CUresult ioConsistencyFenceCurrentCtx()
-{
-    if (VALID_ETBL(iocons))
-        return CUDA_ERROR_UNKNOWN;
-    return iocons->ioConsistencyFenceCurrentCtx();
-}
-
-CUresult ioConsistencyInit()
-{
-    CUresult rc;
-    // non-threadsafe
-    if (iocons) {
-        fprintf(stderr, "CUDA driver feature already initialized\n");
-        rc = CUDA_SUCCESS;
-        goto out;
-    }
-
-    rc = cuGetExportTable((const void**)&iocons, &CU_ETID_IoConsistency);
-    if (rc != CUDA_SUCCESS) {
-        fprintf(stderr, "CUDA driver does not have required support\n");
-        goto out;
-    }
-
-    if (VALID_ETBL(iocons)) {
-        fprintf(stderr, "this should never happen\n");
-        rc = CUDA_ERROR_UNKNOWN;
-    }
-
- out:
-    return rc;
-}
-
 cudaError_t ioRtConsistencyInit()
 {
     cudaError_t rc;
@@ -185,10 +127,28 @@ cudaError_t ioRtConsistencyInit()
 
 cudaError_t ioRtConsistencyFenceCurrentCtx()
 {
-    return (cudaError_t)ioConsistencyFenceCurrentCtx();
+    if (VALID_ETBL(iocons))
+        return cudaErrorUnknown;
+    return (cudaError_t)iocons->ioConsistencyFenceCurrentCtx();
 }
 
-cudaError_t ioRtConsistencyDeviceSupportsCpuFlush(int *pflag, int device)
+cudaError_t ioRtConsistencyDeviceSupportsHostSideFence(int *pflag, int device)
 {
-    return (cudaError_t)ioConsistencyDeviceSupportsCpuFlush(pflag, device);
+    cudaError_t rc;
+    CUresult cr;
+    int attr = 0;
+    CUdevice dev = (device);
+    if (VALID_ETBL(iocons)) {
+        rc = cudaErrorUnknown;
+        goto out;
+    }
+    cr = iocons->ioConsistencyGetAttribute(&attr, CU_IOCONSISTENCY_ATTRIBUTE_SUPPORT_HOSTSIDE_FENCE, dev);
+    if (cr != CUDA_SUCCESS) {
+        rc = (cudaError_t)cr;
+        goto out;
+    }
+    ASSERT(pflag);
+    *pflag = attr;
+out:
+    return rc;
 }
