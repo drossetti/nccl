@@ -143,7 +143,7 @@ ncclResult_t netRecvSetup(struct ncclTopoSystem* topo, struct ncclTopoGraph* gra
   case NET_FLUSH_ETBL:
     if (ioRtConsistencyInit() == cudaSuccess) {
       WARN("ioRtConsistencyInit success, enabling ETBL");
-      // TODO: call ioConsistencyDeviceSupportsCpuFlush
+      // TODO: call ioConsistencyDeviceSupportsHostSideFence
       resources->useEtblFlush = 1;
     } else {
       WARN("ioRtConsistencyInit does not work");
