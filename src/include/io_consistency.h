@@ -7,14 +7,9 @@
 extern "C" {
 #endif // __cplusplus
 
-CUresult ioConsistencyInit(void);
-CUresult ioConsistencyFenceCurrentCtx();
-CUresult ioConsistencyFenceCtx(CUcontext ctx);
-CUresult ioConsistencyDeviceSupportsCpuFlush(int *pflag, int devId);
-
 cudaError_t ioRtConsistencyInit(void);
 cudaError_t ioRtConsistencyFenceCurrentCtx();
-cudaError_t ioRtConsistencyDeviceSupportsCpuFlush(int *pflag, int device);
+cudaError_t ioRtConsistencyDeviceSupportsHostSideFence(int *pflag, int device);
 
 #ifdef __cplusplus
 }
