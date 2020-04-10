@@ -140,15 +140,24 @@ ncclResult_t netRecvSetup(struct ncclTopoSystem* topo, struct ncclTopoGraph* gra
   NCCLCHECK(netGetGdrSupport(topo, myInfo->busId, resources->netDev, 0, &resources->useGdr));
   CUDACHECK(cudaGetDevice(&resources->cudaDev));
   switch (ncclParamNetFlush()) {
-  case NET_FLUSH_ETBL:
-    if (ioRtConsistencyInit() == cudaSuccess) {
+  case NET_FLUSH_ETBL: {
+    cudaError_t rc = ioRtConsistencyInit();
+    if (rc == cudaSuccess) {
       WARN("ioRtConsistencyInit success, enabling ETBL");
-      // TODO: call ioConsistencyDeviceSupportsHostSideFence
-      resources->useEtblFlush = 1;
+      int flag;
+      CUDACHECK(ioRtConsistencyDeviceSupportsHostSideFence(&flag, resources->cudaDev));
+      if (flag) {
+	resources->useEtblFlush = 1;
+      } else {
+	WARN("ioRtConsistencyInit is not supported on device %d\n", resources->cudaDev);
+	exit(EXIT_FAILURE);
+      }
     } else {
-      WARN("ioRtConsistencyInit does not work");
+      WARN("ioRtConsistencyInit returned error %d\n", rc);
+      exit(EXIT_FAILURE);
     }
     break;
+  }
   case NET_FLUSH_EVENT:
     CUDACHECK(cudaDeviceGetAttribute(&resources->cudaDevHasAts, cudaDevAttrDirectManagedMemAccessFromHost, resources->cudaDev));
     if (resources->cudaDevHasAts) {
