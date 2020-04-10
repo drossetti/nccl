@@ -104,7 +104,7 @@ cudaError_t ioRtConsistencyInit()
 {
     cudaError_t rc;
     // non-threadsafe
-    if (VALID_ETBL(iocons)) {
+    if (!VALID_ETBL(iocons)) {
         rc = cudaGetExportTable((const void**)&iocons, &CU_ETID_IoConsistency);
         if (rc != cudaSuccess) {
             fprintf(stderr, "CUDA driver does not have required support\n");
