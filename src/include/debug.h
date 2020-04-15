@@ -7,15 +7,14 @@
 #ifndef NCCL_DEBUG_H_
 #define NCCL_DEBUG_H_
 
-#include <pthread.h>
+#include "core.h"
+
 #include <stdio.h>
 #include <chrono>
 
-#include <unistd.h>
 #include <sys/syscall.h>
 #include <limits.h>
 #include <string.h>
-#include "nccl.h"
 #include "nccl_net.h"
 
 #define gettid() (pid_t) syscall(SYS_gettid)
@@ -25,7 +24,6 @@ extern uint64_t ncclDebugMask;
 extern pthread_mutex_t ncclDebugOutputLock;
 extern FILE *ncclDebugFile;
 extern ncclResult_t getHostName(char* hostname, int maxlen, const char delim);
-extern ncclResult_t getNvmlDevice(int cudaDev, int *nvmlDev);
 
 extern void ncclDebugLog(ncclDebugLogLevel level, unsigned long flags, const char *filefunc, int line, const char *fmt, ...);
 
@@ -61,13 +59,15 @@ static inline void initDebug() {
    * This can be a comma separated list such as INIT,COLL
    * or ^INIT,COLL etc
    */
-  char* nccl_debug_subsys = getenv("NCCL_DEBUG_SUBSYS");
-  if (nccl_debug_subsys != NULL) {
-    char *subsys = strtok(nccl_debug_subsys, ",");
+  char* ncclDebugSubsysEnv = getenv("NCCL_DEBUG_SUBSYS");
+  if (ncclDebugSubsysEnv != NULL) {
+    int invert = 0;
+    if (ncclDebugSubsysEnv[0] == '^') { invert = 1; ncclDebugSubsysEnv++; }
+    ncclDebugMask = invert ? ~0ULL : 0ULL;
+    char *ncclDebugSubsys = strdup(ncclDebugSubsysEnv);
+    char *subsys = strtok(ncclDebugSubsys, ",");
     while (subsys != NULL) {
-      int invert = 0;
       uint64_t mask = 0;
-      if (subsys[0] == '^') { invert = 1; subsys++; }
       if (strcasecmp(subsys, "INIT") == 0) {
         mask = NCCL_INIT;
       } else if (strcasecmp(subsys, "COLL") == 0) {
@@ -78,6 +78,10 @@ static inline void initDebug() {
         mask = NCCL_SHM;
       } else if (strcasecmp(subsys, "NET") == 0) {
         mask = NCCL_NET;
+      } else if (strcasecmp(subsys, "GRAPH") == 0) {
+        mask = NCCL_GRAPH;
+      } else if (strcasecmp(subsys, "TUNING") == 0) {
+        mask = NCCL_TUNING;
       } else if (strcasecmp(subsys, "ALL") == 0) {
         mask = NCCL_ALL;
       }
@@ -86,23 +90,24 @@ static inline void initDebug() {
       }
       subsys = strtok(NULL, ",");
     }
+    free(ncclDebugSubsys);
   }
 
   /* Parse and expand the NCCL_DEBUG_FILE path and
    * then create the debug file. But don't bother unless the
    * NCCL_DEBUG level is > VERSION
    */
-  const char* nccl_debug_file = getenv("NCCL_DEBUG_FILE");
-  if (ncclDebugLevel > NCCL_LOG_VERSION && nccl_debug_file != NULL) {
+  const char* ncclDebugFileEnv = getenv("NCCL_DEBUG_FILE");
+  if (ncclDebugLevel > NCCL_LOG_VERSION && ncclDebugFileEnv != NULL) {
     int c = 0;
-    char debug_fn[PATH_MAX+1] = "";
-    char *dfn = debug_fn;
-    while (nccl_debug_file[c] != '\0' && c < PATH_MAX) {
-      if (nccl_debug_file[c++] != '%') {
-        *dfn++ = nccl_debug_file[c-1];
+    char debugFn[PATH_MAX+1] = "";
+    char *dfn = debugFn;
+    while (ncclDebugFileEnv[c] != '\0' && c < PATH_MAX) {
+      if (ncclDebugFileEnv[c++] != '%') {
+        *dfn++ = ncclDebugFileEnv[c-1];
         continue;
       }
-      switch (nccl_debug_file[c++]) {
+      switch (ncclDebugFileEnv[c++]) {
         case '%': // Double %
           *dfn++ = '%';
           break;
@@ -116,15 +121,15 @@ static inline void initDebug() {
           break;
         default: // Echo everything we don't understand
           *dfn++ = '%';
-          *dfn++ = nccl_debug_file[c-1];
+          *dfn++ = ncclDebugFileEnv[c-1];
           break;
       }
     }
     *dfn = '\0';
-    if (debug_fn[0] != '\0') {
-      FILE *file = fopen(debug_fn, "w");
+    if (debugFn[0] != '\0') {
+      FILE *file = fopen(debugFn, "w");
       if (file != NULL) {
-        INFO(NCCL_ALL,"DEBUG file is '%s'", debug_fn);
+        INFO(NCCL_ALL,"DEBUG file is '%s'", debugFn);
         ncclDebugFile = file;
       }
     }
