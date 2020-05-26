@@ -111,7 +111,7 @@ cudaError_t ioRtConsistencyInit()
             goto out;
         }
 
-        if (VALID_ETBL(iocons)) {
+        if (!VALID_ETBL(iocons)) {
             fprintf(stderr, "this should never happen\n");
             rc = cudaErrorUnknown;
             goto out;
