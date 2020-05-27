@@ -94,7 +94,7 @@ typedef struct CUetblIoConsistency_st {
 }
 #endif // __cplusplus
 
-#define VALID_ETBL(IOCONS) (NULL != (IOCONS))
+#define VALID_ETBL(IOCONS) ((NULL != (IOCONS)) && ((IOCONS)->struct_size >= sizeof(CUetblIoConsistency)))
 
 //-----------------------------------------------------------
 
@@ -103,16 +103,16 @@ static CUetblIoConsistency *iocons = NULL;
 cudaError_t ioRtConsistencyInit()
 {
     cudaError_t rc;
-    // non-threadsafe
+    // Note: this is not threadsafe
     if (!VALID_ETBL(iocons)) {
         rc = cudaGetExportTable((const void**)&iocons, &CU_ETID_IoConsistency);
         if (rc != cudaSuccess) {
-            fprintf(stderr, "CUDA driver does not have required support\n");
+            fprintf(stderr, "error: CUDA driver does not have required support\n");
             goto out;
         }
 
         if (!VALID_ETBL(iocons)) {
-            fprintf(stderr, "this should never happen\n");
+            fprintf(stderr, "error: retrieved IoConsitency etbl is invalid\n");
             rc = cudaErrorUnknown;
             goto out;
         }
@@ -127,18 +127,21 @@ cudaError_t ioRtConsistencyInit()
 
 cudaError_t ioRtConsistencyFenceCurrentCtx()
 {
-    if (VALID_ETBL(iocons))
+    if (!VALID_ETBL(iocons)) {
+        fprintf(stderr, "error: retrieved IoConsitency etbl is invalid\n");
         return cudaErrorUnknown;
+    }
     return (cudaError_t)iocons->ioConsistencyFenceCurrentCtx();
 }
 
 cudaError_t ioRtConsistencyDeviceSupportsHostSideFence(int *pflag, int device)
 {
-    cudaError_t rc;
+    cudaError_t rc = cudaSuccess;
     CUresult cr;
     int attr = 0;
     CUdevice dev = (device);
-    if (VALID_ETBL(iocons)) {
+    if (!VALID_ETBL(iocons)) {
+        fprintf(stderr, "error: retrieved IoConsitency etbl is invalid\n");        
         rc = cudaErrorUnknown;
         goto out;
     }
